@@ -5,6 +5,10 @@ pub use rasn as asn;
 pub use rasn_snmp as snmp;
 use snmp::v2::{ObjectSyntax, VarBindList};
 
+extern crate self as snipe;
+
+pub use snipe_macros::*;
+
 // Design:
 // snmp_interface.my_mib_name()
 //     where my_mib_name is implemented by trait GetMyMibName generated from a MIB (method/trait name is customizable)
@@ -45,58 +49,16 @@ impl<T: SnmpInterface> GetSnmpInterface for T {
     }
 }
 
-#[macro_export]
-macro_rules! declare_mib {
-    ($method_name:ident, $struct_name:ident) => {
-        struct $struct_name<'a, I: $crate::SnmpInterface>(&'a mut I);
-        impl<'a, I: $crate::SnmpInterface> $crate::GetSnmpInterface for $struct_name<'a, I> {
-            type Interface = I;
-        
-            fn snmp_interface(&mut self) -> &mut Self::Interface {
-                self.0
-            }
-        }
-    };
-    ($method_name:ident, $struct_name:ident, $get_trait_name:ident) => {
-        $crate::declare_mib!($method_name, $struct_name);
-
-        trait $get_trait_name {
-            type Interface: $crate::SnmpInterface;
-            fn $method_name<'a>(&'a mut self) -> $struct_name<'a, Self::Interface>;
-        }
-        
-        impl<T: SnmpInterface> $get_trait_name for T {
-            type Interface = T;
-        
-            fn $method_name<'a>(&'a mut self) -> $struct_name<'a, Self::Interface> {
-                $struct_name(self.snmp_interface())
-            }
-        }
-    }
-}
-
-#[macro_export]
-macro_rules! declare_oid {
-    ($type:ty, $pascal_oid_name:ident, $snake_oid_name:ident) => {
-        trait $pascal_oid_name: Sized + $crate::GetSnmpInterface {
-            const OID: $crate::asn::types::ConstOid;
-            fn $snake_oid_name(&self) -> Result<$type, $crate::Error> {
-                self.snmp_interface().read(Self::OID.into())?.into()
-            }
-        }
-    };
-}
-
 // ----------------------------------- GENERATED ------------------------------------
 // Per MIB
 
-declare_oid!(std::net::Ipv4Addr, IpAddressOid, ip_address);
-declare_mib!(example_mib, ExampleMib, GetExampleMib);
+declare_oid!("ipAddress", std::net::Ipv4Addr);
+declare_mib!("EXAMPLE-MIB.mib");
 
 // Per OID (overall)
 
 // Per OID per MIB
-impl<'a, I: SnmpInterface> IpAddressOid for ExampleMib<'a, I> {
+impl<'a, I: SnmpInterface> ReadIpAddress for ExampleMib<'a, I> {
     const OID: ConstOid = ConstOid(&[1_u32, 3_u32, 6_u32, 1_u32, 4_u32, 1_u32]);
 }
 
