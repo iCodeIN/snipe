@@ -1,8 +1,8 @@
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
+use proc_macro::{TokenStream, Ident};
+use quote::quote;
+
+#[proc_macro]
+pub fn declare_mib(item: TokenStream) -> TokenStream {
+    let ident: Ident = item.parse();
+    quote! {}
 }

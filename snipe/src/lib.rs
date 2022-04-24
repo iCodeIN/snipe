@@ -3,6 +3,111 @@ use std::ops::Deref;
 pub use rasn::prelude::*;
 pub use rasn as asn;
 pub use rasn_snmp as snmp;
+use snmp::v2::{ObjectSyntax, VarBindList};
+
+// Design:
+// snmp_interface.my_mib_name()
+//     where my_mib_name is implemented by trait GetMyMibName generated from a MIB (method/trait name is customizable)
+//     this trait is implemented on anything that implements GetSnmpInterface
+//     this method returns MyMibName (struct name is customizable)
+// .ip_address()
+//     where ip_address is implemented by trait GetIpAddressOid generated from an OID called ipAddress
+//     this trait is implemented on MyMibName
+//     this method returns IpAddress
+// .get().unwrap()
+//     where get is default-implemented by trait ReadableScalar
+//         where ReadableScalar requires trait Scalar
+//             Scalar has an OID constant
+//             Scalar has an associated type
+//         where ReadableScalar requires trait GetSnmpInterface
+//         default implementation uses GetSnmpInterface and does a read of the OID indicated by the Scalar implementation
+//     this trait is implemented on IpAddress
+//     this method returns Result<{Scalar's associated type}, Error>
+
+// ------------------------------------- FIXED ------------------------------------- 
+
+trait SnmpInterface {
+    fn read(&mut self, oid: ObjectIdentifier) -> Result<ObjectSyntax, Error>;
+    fn write(&mut self, oid: ObjectIdentifier, value: ObjectSyntax) -> Result<(), Error>;
+    fn bulk(&mut self, oid: ObjectIdentifier) -> Result<VarBindList, Error>;
+}
+
+trait GetSnmpInterface {
+    type Interface: SnmpInterface;
+    fn snmp_interface(&mut self) -> &mut Self::Interface;
+}
+
+impl<T: SnmpInterface> GetSnmpInterface for T {
+    type Interface = T;
+
+    fn snmp_interface(&mut self) -> &mut Self::Interface {
+        self
+    }
+}
+
+#[macro_export]
+macro_rules! declare_mib {
+    ($method_name:ident, $struct_name:ident) => {
+        struct $struct_name<'a, I: $crate::SnmpInterface>(&'a mut I);
+        impl<'a, I: $crate::SnmpInterface> $crate::GetSnmpInterface for $struct_name<'a, I> {
+            type Interface = I;
+        
+            fn snmp_interface(&mut self) -> &mut Self::Interface {
+                self.0
+            }
+        }
+    };
+    ($method_name:ident, $struct_name:ident, $get_trait_name:ident) => {
+        $crate::declare_mib!($method_name, $struct_name);
+
+        trait $get_trait_name {
+            type Interface: $crate::SnmpInterface;
+            fn $method_name<'a>(&'a mut self) -> $struct_name<'a, Self::Interface>;
+        }
+        
+        impl<T: SnmpInterface> $get_trait_name for T {
+            type Interface = T;
+        
+            fn $method_name<'a>(&'a mut self) -> $struct_name<'a, Self::Interface> {
+                $struct_name(self.snmp_interface())
+            }
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! declare_oid {
+    ($type:ty, $pascal_oid_name:ident, $snake_oid_name:ident) => {
+        trait $pascal_oid_name: Sized + $crate::GetSnmpInterface {
+            const OID: $crate::asn::types::ConstOid;
+            fn $snake_oid_name(&self) -> Result<$type, $crate::Error> {
+                self.snmp_interface().read(Self::OID.into())?.into()
+            }
+        }
+    };
+}
+
+// ----------------------------------- GENERATED ------------------------------------
+// Per MIB
+
+declare_oid!(std::net::Ipv4Addr, IpAddressOid, ip_address);
+declare_mib!(example_mib, ExampleMib, GetExampleMib);
+
+// Per OID (overall)
+
+// Per OID per MIB
+impl<'a, I: SnmpInterface> IpAddressOid for ExampleMib<'a, I> {
+    const OID: ConstOid = ConstOid(&[1_u32, 3_u32, 6_u32, 1_u32, 4_u32, 1_u32]);
+}
+
+//     where ip_address is implemented by trait GetIpAddressOid generated from an OID called ipAddress
+//     this trait is implemented on MyMibName
+//     this method returns IpAddress
+
+fn x<T: SnmpInterface>(mut x: T) {
+    x.example_mib().ip_address();
+} 
+
 
 trait AsOid {
     fn as_oid(&self) -> ObjectIdentifier;
@@ -38,19 +143,6 @@ trait ReadableAtMib: IndexedScalarMib {
 
 trait WriteableAtMib: IndexedScalarMib {
     fn set(&self, index: &Self::Index, value: &Self::Value) -> Result<(), Error>;
-}
-
-/* ------------------------------------------------------------------------ */
-
-struct IpAddress;
-impl ScalarMib for IpAddress {
-    type Value;
-}
-
-impl WriteableMib for IpAddress {
-    fn set(&mut self, value: &Self::Value) -> Result<(), Error> {
-        todo!()
-    }
 }
 
 #[cfg(test)]
