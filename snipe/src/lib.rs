@@ -1,7 +1,13 @@
-use std::ops::Deref;
+pub mod prelude;
 
-pub use rasn::prelude::*;
+use std::{
+    num::{ParseIntError, TryFromIntError},
+    str::Utf8Error,
+};
+
 pub use rasn as asn;
+pub use rasn::prelude::*;
+use rasn_smi::v1::{InvalidVariant, IpAddress};
 pub use rasn_snmp as snmp;
 use snmp::v2::{ObjectSyntax, VarBindList};
 
@@ -9,36 +15,31 @@ extern crate self as snipe;
 
 pub use snipe_macros::*;
 
-// Design:
-// snmp_interface.my_mib_name()
-//     where my_mib_name is implemented by trait GetMyMibName generated from a MIB (method/trait name is customizable)
-//     this trait is implemented on anything that implements GetSnmpInterface
-//     this method returns MyMibName (struct name is customizable)
-// .ip_address()
-//     where ip_address is implemented by trait GetIpAddressOid generated from an OID called ipAddress
-//     this trait is implemented on MyMibName
-//     this method returns IpAddress
-// .get().unwrap()
-//     where get is default-implemented by trait ReadableScalar
-//         where ReadableScalar requires trait Scalar
-//             Scalar has an OID constant
-//             Scalar has an associated type
-//         where ReadableScalar requires trait GetSnmpInterface
-//         default implementation uses GetSnmpInterface and does a read of the OID indicated by the Scalar implementation
-//     this trait is implemented on IpAddress
-//     this method returns Result<{Scalar's associated type}, Error>
+// ------------------------------------- FIXED -------------------------------------
 
-// ------------------------------------- FIXED ------------------------------------- 
-
-trait SnmpInterface {
+pub trait SnmpInterface {
     fn read(&mut self, oid: ObjectIdentifier) -> Result<ObjectSyntax, Error>;
     fn write(&mut self, oid: ObjectIdentifier, value: ObjectSyntax) -> Result<(), Error>;
     fn bulk(&mut self, oid: ObjectIdentifier) -> Result<VarBindList, Error>;
 }
 
-trait GetSnmpInterface {
+pub trait GetSnmpInterface {
     type Interface: SnmpInterface;
     fn snmp_interface(&mut self) -> &mut Self::Interface;
+}
+
+pub fn append_index<T, C: prelude::SnmpConverter<T>>(
+    base_oid: ObjectIdentifier,
+    value: T,
+) -> Result<ObjectIdentifier, Error> {
+    let bytes =
+        rasn::ber::encode(C::try_to_snmp(value)?).map_err(|x| Error::EncodeError(x.to_string()))?;
+}
+
+/// A noddy trait containing the type of declared OIDs, to avoid needing to specify the type again when implementing the
+/// OID for a particular MIB.
+pub trait OidType {
+    type Type;
 }
 
 impl<T: SnmpInterface> GetSnmpInterface for T {
@@ -52,13 +53,14 @@ impl<T: SnmpInterface> GetSnmpInterface for T {
 // ----------------------------------- GENERATED ------------------------------------
 // Per MIB
 
-declare_oid!("ipAddress", std::net::Ipv4Addr);
+declare_oid!("ipAddress", IpAddress);
 declare_mib!("EXAMPLE-MIB.mib");
 
 // Per OID (overall)
 
 // Per OID per MIB
 impl<'a, I: SnmpInterface> ReadIpAddress for ExampleMib<'a, I> {
+    type Converter = prelude::DefaultConverter;
     const OID: ConstOid = ConstOid(&[1_u32, 3_u32, 6_u32, 1_u32, 4_u32, 1_u32]);
 }
 
@@ -67,44 +69,40 @@ impl<'a, I: SnmpInterface> ReadIpAddress for ExampleMib<'a, I> {
 //     this method returns IpAddress
 
 fn x<T: SnmpInterface>(mut x: T) {
-    x.example_mib().ip_address();
-} 
-
+    x.example_mib().ip_address().unwrap();
+}
 
 trait AsOid {
     fn as_oid(&self) -> ObjectIdentifier;
 }
 
-enum Error {
+#[derive(thiserror::Error, Debug)]
+pub enum MessageError {}
 
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("conversion to the given type is unsupported")]
+    UnsupportedConversion,
+    #[error("value of integer is outside the range of the target numeric type")]
+    IntegerValueOutOfRange,
+    #[error("failed to create a UTF8 string from the given octet string: {}", .0)]
+    Utf8(#[from] Utf8Error),
+    #[error("failed to parse the given integer: {}", .0)]
+    IntegerParse(#[from] ParseIntError),
+    #[error("failed to convert from an int: {}", .0)]
+    IntegerConvert(#[from] TryFromIntError),
+    #[error("this error is impossible")]
+    Infalliable(#[from] std::convert::Infallible),
+    #[error("message was valid SMI but was not the variant we expected")]
+    InvalidVariant,
+    #[error("failed to encode SNMP message/object: {}", .0)]
+    EncodeError(String),
 }
 
-trait Mib {
-    const OID: ObjectIdentifier;
-}
-
-trait ScalarMib: Mib {
-    type Value: TryFrom<snmp::v2::ObjectSyntax, Error = Error> + TryInto<snmp::v2::ObjectSyntax, Error = Error>; 
-}
-
-trait ReadableMib: ScalarMib {
-    fn get(&self) -> Self::Value;
-}
-
-trait WriteableMib: ScalarMib {
-    fn set(&mut self, value: &Self::Value) -> Result<(), Error>;
-}
-
-trait IndexedScalarMib: ScalarMib {
-    type Index: TryFrom<ObjectIdentifier, Error = Error> + TryInto<ObjectIdentifier, Error = Error>;
-}
-
-trait ReadableAtMib: IndexedScalarMib {
-    fn get(&self, index: &Self::Index) -> Result<Self::Value, Error>;
-}
-
-trait WriteableAtMib: IndexedScalarMib {
-    fn set(&self, index: &Self::Index, value: &Self::Value) -> Result<(), Error>;
+impl From<InvalidVariant> for Error {
+    fn from(_: InvalidVariant) -> Self {
+        Error::InvalidVariant
+    }
 }
 
 #[cfg(test)]

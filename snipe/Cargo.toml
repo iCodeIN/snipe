@@ -8,4 +8,7 @@ edition = "2021"
 [dependencies]
 rasn-snmp = "*"
 rasn = "*"
+rasn-smi = "*"
+num-bigint = "*"
+thiserror = "*"
 snipe-macros = { path = "../snipe-macros" }
