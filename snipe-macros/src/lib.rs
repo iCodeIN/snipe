@@ -1,6 +1,9 @@
 use convert_case::{Case, Casing};
 use quote::quote;
-use syn::{parse::Parse, parse_macro_input, spanned::Spanned, Ident, Lit, Token, Type};
+use syn::{
+    parse::Parse, parse_macro_input, punctuated::Punctuated, spanned::Spanned, Ident, Lit, Token,
+    Type,
+};
 
 #[proc_macro]
 pub fn declare_mib(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -123,6 +126,59 @@ pub fn declare_oid(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 }
             }
         }.into()
+    } else {
+        proc_macro::TokenStream::new()
+    }
+}
+
+#[proc_macro]
+pub fn __private_api_default_tuple_index_impl(
+    item: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    let input = parse_macro_input!(item as Lit);
+    if let Lit::Int(num_generics_b10) = input {
+        if let Ok(num_generics) = num_generics_b10.base10_parse::<u16>() {
+        let mut constraints = Punctuated::<_, Token![+]>::new();
+        let mut generics = Punctuated::<_, Token![,]>::new();
+        let mut generics_lower = Punctuated::<_, Token![,]>::new();
+        let mut from_impls = Vec::new();
+        let mut to_impls = Vec::new();
+        for i in 0..num_generics {
+            constraints.push(quote! { OidConverter<#i> });
+            
+            let upper = Ident::new(format!("I{i}").as_str(), num_generics_b10.span());
+            generics.push(upper);
+
+            let lower = Ident::new(format!("i{i}").as_str(), num_generics_b10.span());
+            let lower_r = Ident::new(format!("i{i}_r").as_str(), num_generics_b10.span());
+            generics_lower.push(lower);
+            from_impls.push(
+                quote! {
+                    let #lower_r = #upper::try_from_oid(identifier);
+                    let #lower = #lower_r.converted;
+                    identifier = identifier[#lower_r.num_consumed..];
+                }
+            );
+
+            
+        }
+
+
+        quote! {
+            impl<T: #constraints, #generics> OidConverter<(#generics)> for T {
+                fn try_from_oid(mut identifier: &[u32]) -> Result<OidConversionResult<(#generics)>, crate::Error> {
+                    #(#from_impls)*
+                    
+                }
+        
+                fn try_to_oid(value: (#generics)) -> Result<ObjectIdentifier, crate::Error> {
+                    todo!()
+                }
+            }
+        }.into()
+    } else {
+        proc_macro::TokenStream::new()
+    }
     } else {
         proc_macro::TokenStream::new()
     }

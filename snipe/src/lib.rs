@@ -28,12 +28,10 @@ pub trait GetSnmpInterface {
     fn snmp_interface(&mut self) -> &mut Self::Interface;
 }
 
-pub fn append_index<T, C: prelude::SnmpConverter<T>>(
+pub fn append_index<T, C: prelude::OidConverter<T>>(
     base_oid: ObjectIdentifier,
     value: T,
 ) -> Result<ObjectIdentifier, Error> {
-    let bytes =
-        rasn::ber::encode(C::try_to_snmp(value)?).map_err(|x| Error::EncodeError(x.to_string()))?;
 }
 
 /// A noddy trait containing the type of declared OIDs, to avoid needing to specify the type again when implementing the
@@ -97,6 +95,8 @@ pub enum Error {
     InvalidVariant,
     #[error("failed to encode SNMP message/object: {}", .0)]
     EncodeError(String),
+    #[error("octet string length does not match the fixed expected length: expected {}, got {}", .0, .1)]
+    StringLengthError(usize, usize),
 }
 
 impl From<InvalidVariant> for Error {
