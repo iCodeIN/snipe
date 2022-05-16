@@ -2,7 +2,7 @@ use convert_case::{Case, Casing};
 use quote::quote;
 use syn::{
     parse::Parse, parse_macro_input, punctuated::Punctuated, spanned::Spanned, Ident, Lit, Token,
-    Type,
+    Type, Index,
 };
 
 #[proc_macro]
@@ -22,7 +22,7 @@ pub fn declare_mib(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
         let method_name: Ident = Ident::new(mib_name.to_case(Case::Snake).as_str(), input_span);
         quote! {
             pub struct #struct_name<'a, I: ::snipe::SnmpInterface>(&'a mut I);
-            impl<'a, I: ::snipe::SnmpInterface> ::snipe::GetSnmpInterface for #struct_name<'a, I> {
+            impl<'a, I: ::snipe::SnmpInterface + Send + Sync> ::snipe::GetSnmpInterface for #struct_name<'a, I> {
                 type Interface = I;
 
                 fn snmp_interface(&mut self) -> &mut Self::Interface {
@@ -89,40 +89,64 @@ pub fn declare_oid(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
         let set_method_name: Ident =
             Ident::new(format!("set_{snake_oid_name}").as_str(), oid_name_span);
         quote! {
+            #[async_trait::async_trait]
             pub trait #read_trait_name: Sized + ::snipe::GetSnmpInterface {
                 type Converter: ::snipe::prelude::SnmpConverter<#type_name>;
                 const OID: ::snipe::asn::types::ConstOid;
-                fn #get_method_name(&mut self) -> Result<#type_name, ::snipe::Error> {
+                async fn #get_method_name(&mut self) -> Result<#type_name, ::snipe::Error> {
                     <Self::Converter as ::snipe::prelude::SnmpConverter<#type_name>>::try_from_snmp(
                         ::snipe::SnmpInterface::read(
                             snipe::GetSnmpInterface::snmp_interface(self),
                             Self::OID.into()
-                        )?
+                        ).await?
                     )
                 }
             }
+            #[async_trait::async_trait]
             pub trait #read_indexed_trait_name: Sized + ::snipe::GetSnmpInterface {
-                type Index;
+                type Index: Send + Sync;
                 type Converter: ::snipe::prelude::SnmpConverter<#type_name>;
-                type IndexConverter: ::snipe::prelude::SnmpConverter<Self::Index>;
+                type IndexConverter: ::snipe::prelude::OidConverter<Self::Index>;
                 const OID: ::snipe::asn::types::ConstOid;
-                fn #get_method_name(&mut self, index: Self::Index) -> Result<#type_name, ::snipe::Error> {
-                    todo!()
+                async fn #get_method_name(&mut self, index: Self::Index) -> Result<#type_name, ::snipe::Error> {
+                    <Self::Converter as ::snipe::prelude::SnmpConverter<#type_name>>::try_from_snmp(
+                        ::snipe::SnmpInterface::read(
+                            snipe::GetSnmpInterface::snmp_interface(self),
+                            ::snipe::append_index::<_, Self::IndexConverter>(
+                                Self::OID.into(),
+                                index
+                            )?
+                        ).await?
+                    )
                 }
             }
+            #[async_trait::async_trait]
             pub trait #write_trait_name: Sized + ::snipe::GetSnmpInterface {
+                type Converter: ::snipe::prelude::SnmpConverter<#type_name>;
                 const OID: ::snipe::asn::types::ConstOid;
-                fn #set_method_name(&mut self, value: #type_name) -> Result<(), ::snipe::Error> {
-                    todo!()
+                async fn #set_method_name(&mut self, value: #type_name) -> Result<(), ::snipe::Error> {
+                    ::snipe::SnmpInterface::write(
+                        snipe::GetSnmpInterface::snmp_interface(self),
+                        Self::OID.into(),
+                        <Self::Converter as ::snipe::prelude::SnmpConverter<#type_name>>::try_to_snmp(value)?
+                    ).await
                 }
             }
+            #[async_trait::async_trait]
             pub trait #write_indexed_trait_name: Sized + ::snipe::GetSnmpInterface {
-                type Index;
+                type Index: Send + Sync;
                 type Converter: ::snipe::prelude::SnmpConverter<#type_name>;
-                type IndexConverter: ::snipe::prelude::SnmpConverter<Self::Index>;
+                type IndexConverter: ::snipe::prelude::OidConverter<Self::Index>;
                 const OID: ::snipe::asn::types::ConstOid;
-                fn #set_method_name(&mut self, index: Self::Index, value: #type_name) -> Result<(), ::snipe::Error> {
-                    todo!()
+                async fn #set_method_name(&mut self, index: Self::Index, value: #type_name) -> Result<(), ::snipe::Error> {
+                    ::snipe::SnmpInterface::write(
+                        snipe::GetSnmpInterface::snmp_interface(self),
+                        ::snipe::append_index::<_, Self::IndexConverter>(
+                            Self::OID.into(),
+                            index
+                        )?,
+                        <Self::Converter as ::snipe::prelude::SnmpConverter<#type_name>>::try_to_snmp(value)?
+                    ).await
                 }
             }
         }.into()
@@ -131,54 +155,74 @@ pub fn declare_oid(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     }
 }
 
+enum MibOidField {
+    
+}
+
 #[proc_macro]
-pub fn __private_api_default_tuple_index_impl(
+pub fn __private_api_tuple_oid_converter_impl(
     item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
     let input = parse_macro_input!(item as Lit);
     if let Lit::Int(num_generics_b10) = input {
-        if let Ok(num_generics) = num_generics_b10.base10_parse::<u16>() {
-        let mut constraints = Punctuated::<_, Token![+]>::new();
-        let mut generics = Punctuated::<_, Token![,]>::new();
-        let mut generics_lower = Punctuated::<_, Token![,]>::new();
-        let mut from_impls = Vec::new();
-        let mut to_impls = Vec::new();
-        for i in 0..num_generics {
-            constraints.push(quote! { OidConverter<#i> });
-            
-            let upper = Ident::new(format!("I{i}").as_str(), num_generics_b10.span());
-            generics.push(upper);
+        let mut impls = Vec::new();
+        for num_generics in 2..=num_generics_b10.base10_parse::<usize>().unwrap_or(0) {
 
-            let lower = Ident::new(format!("i{i}").as_str(), num_generics_b10.span());
-            let lower_r = Ident::new(format!("i{i}_r").as_str(), num_generics_b10.span());
-            generics_lower.push(lower);
-            from_impls.push(
-                quote! {
-                    let #lower_r = #upper::try_from_oid(identifier);
-                    let #lower = #lower_r.converted;
-                    identifier = identifier[#lower_r.num_consumed..];
+            let mut constraints = Punctuated::<_, Token![+]>::new();
+            let mut generics = Punctuated::<_, Token![,]>::new();
+            let mut generics_lower = Punctuated::<_, Token![,]>::new();
+            let mut from_impls = Vec::new();
+            let mut to_impls = Vec::new();
+            for i in 0..num_generics {
+                let upper = Ident::new(format!("I{i}").as_str(), num_generics_b10.span());
+                constraints.push(quote! { OidConverter<#upper> });
+                
+                generics.push(upper.clone());
+    
+                let lower = Ident::new(format!("i{i}").as_str(), num_generics_b10.span());
+                let lower_r = Ident::new(format!("i{i}_r").as_str(), num_generics_b10.span());
+                generics_lower.push(lower.clone());
+                from_impls.push(
+                    quote! {
+                        let #lower_r = <T as OidConverter<#upper>>::try_from_oid(identifier)?;
+                        let #lower = #lower_r.converted;
+                        identifier = &identifier[#lower_r.num_consumed..];
+                    }
+                );
+    
+                let idx = Index::from(i);
+                to_impls.push(
+                    quote! {
+                        identifiers.extend(<T as OidConverter<#upper>>::try_to_oid(value.#idx)?.iter().copied());
+                    }
+                )
+            }
+    
+            impls.push(quote! {
+                impl<T: #constraints, #generics> OidConverter<(#generics)> for T {
+                    fn try_from_oid(mut identifier: &[u32]) -> Result<OidConversionResult<(#generics)>, crate::Error> {
+                        let og_len = identifier.len();
+                        #(#from_impls)*
+                        Ok(
+                            OidConversionResult {
+                                num_consumed: og_len - identifier.len(),
+                                converted: (#generics_lower)
+                            }
+                        )
+                    }
+            
+                    fn try_to_oid(value: (#generics)) -> Result<ObjectIdentifier, crate::Error> {
+                        let mut identifiers = Vec::new();
+                        #(#to_impls)*
+                        Ok(ObjectIdentifier::new_unchecked(identifiers.into()))
+                    }
                 }
-            );
-
-            
+            })
         }
 
-
         quote! {
-            impl<T: #constraints, #generics> OidConverter<(#generics)> for T {
-                fn try_from_oid(mut identifier: &[u32]) -> Result<OidConversionResult<(#generics)>, crate::Error> {
-                    #(#from_impls)*
-                    
-                }
-        
-                fn try_to_oid(value: (#generics)) -> Result<ObjectIdentifier, crate::Error> {
-                    todo!()
-                }
-            }
+            #(#impls)*
         }.into()
-    } else {
-        proc_macro::TokenStream::new()
-    }
     } else {
         proc_macro::TokenStream::new()
     }

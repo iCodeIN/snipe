@@ -7,16 +7,18 @@ use rasn_smi::{
     v2::{ObjectSyntax, SimpleSyntax},
 };
 
-pub struct FixedLengthOctetString<const N: usize>([u8; N]);
+pub use crate::rfc1212::*;
+
+pub struct FixedLengthOctetString<const N: usize>(pub [u8; N]);
 
 /// Encapsulates an OID conversion result. That is, a type containing the given T and the number of identifiers
 /// consumed when reading that T from an OID.
 pub struct OidConversionResult<T> {
     /// The number of bytes or identifiers read
-    num_consumed: usize,
+    pub num_consumed: usize,
 
     /// The T read from the OID.
-    converted: T,
+    pub converted: T,
 }
 
 /// Defines methods for converting the given T to/from a SNMP [`ObjectSyntax`].
@@ -45,11 +47,11 @@ macro_rules! try_into_snmp_converter {
         $visibility struct $name;
         $(
             impl SnmpConverter<$type> for $name {
-                fn try_from_snmp(syntax: ObjectSyntax) -> Result<$type, crate::Error> {
+                fn try_from_snmp(syntax: ObjectSyntax) -> Result<$type, $crate::Error> {
                     Ok(syntax.try_into()?)
                 }
 
-                fn try_to_snmp(value: $type) -> Result<ObjectSyntax, crate::Error> {
+                fn try_to_snmp(value: $type) -> Result<ObjectSyntax, $crate::Error> {
                     Ok(value.try_into()?)
                 }
             }
@@ -63,7 +65,7 @@ impl<const N: usize> TryFrom<ObjectSyntax> for FixedLengthOctetString<N> {
     fn try_from(value: ObjectSyntax) -> Result<Self, Self::Error> {
         let str: OctetString = value.try_into()?;
         if str.len() == N {
-            Err(crate::Error::StringLengthError(N, str.len()))
+            Err(crate::Error::StringLength(N, str.len()))
         } else {
             let mut ret = [0_u8; N];
             for (i, byte) in str.into_iter().enumerate() {
@@ -75,19 +77,38 @@ impl<const N: usize> TryFrom<ObjectSyntax> for FixedLengthOctetString<N> {
     }
 }
 
-impl<const N: usize> Into<ObjectSyntax> for FixedLengthOctetString<N> {
-    fn into(self) -> ObjectSyntax {
-        ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_iter(self.0)))
+impl<const N: usize> From<FixedLengthOctetString<N>> for ObjectSyntax {
+    fn from(val: FixedLengthOctetString<N>) -> Self {
+        ObjectSyntax::Simple(SimpleSyntax::String(OctetString::from_iter(val.0)))
     }
 }
 
 impl<const N: usize> SnmpConverter<FixedLengthOctetString<N>> for DefaultConverter {
     fn try_from_snmp(syntax: ObjectSyntax) -> Result<FixedLengthOctetString<N>, crate::Error> {
-        Ok(syntax.try_into()?)
+        syntax.try_into()
     }
 
     fn try_to_snmp(value: FixedLengthOctetString<N>) -> Result<ObjectSyntax, crate::Error> {
         Ok(value.try_into()?)
+    }
+}
+
+impl<const N: usize> From<FixedLengthOctetString<N>> for OctetString {
+    fn from(val: FixedLengthOctetString<N>) -> Self {
+        val.0.to_vec().into()
+    }
+}
+
+impl<const N: usize> TryFrom<FixedLengthOctetString<N>> for String {
+    type Error = std::string::FromUtf8Error;
+    fn try_from(value: FixedLengthOctetString<N>) -> Result<Self, Self::Error> {
+        String::from_utf8(value.0.into_iter().collect())
+    }
+}
+
+impl<const N: usize> FixedLengthOctetString<N> {
+    pub fn try_as_str(&self) -> Result<&str, crate::Error> {
+        Ok(std::str::from_utf8(&self.0[..])?)
     }
 }
 
@@ -115,3 +136,7 @@ try_into_snmp_converter! {
         IpAddress
     )
 }
+
+// 11 is the max length for index tuples. currently matches Rust's max length to get common implementations for traits
+// like Eq, Debug, etc..
+snipe_macros::__private_api_tuple_oid_converter_impl! { 11 }

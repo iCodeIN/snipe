@@ -12,3 +12,5 @@ rasn-smi = "*"
 num-bigint = "*"
 thiserror = "*"
 snipe-macros = { path = "../snipe-macros" }
+async-trait = "*"
+tokio = "*"
