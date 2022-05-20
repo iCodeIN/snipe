@@ -155,10 +155,6 @@ pub fn declare_oid(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     }
 }
 
-enum MibOidField {
-    
-}
-
 #[proc_macro]
 pub fn __private_api_tuple_oid_converter_impl(
     item: proc_macro::TokenStream,

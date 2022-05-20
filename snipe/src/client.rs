@@ -68,11 +68,11 @@ impl<T: AsyncRead + AsyncWrite> DefaultSnmpInterface<T> {
                 security_model: 3_u32.into(),
             },
             security_parameters: USMSecurityParameters {
-                authoritative_engine_id: self.engine_id,
+                authoritative_engine_id: self.engine_id.clone(),
                 authoritative_engine_time: self.time().into(),
                 // NOTE: ORDER MATTERS HERE!
                 authoritative_engine_boots: self.boots.into(),
-                user_name: self.user_name,
+                user_name: self.user_name.clone(),
                 authentication_parameters: todo!(),
                 privacy_parameters: todo!(),
             },

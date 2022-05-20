@@ -10,7 +10,7 @@ use rasn::types::OctetString;
 //            --  .... ..10   reserved, MUST NOT be used.
 //            --  .... ..11   is OK, means authPriv
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct MessageFlags {
     pub reportable: bool,
     pub auth: bool,
@@ -26,15 +26,15 @@ impl TryFrom<MessageFlags> for OctetString {
         } else {
             let mut ret = 0_u8;
             if value.reportable {
-                ret |= 0x100_u8;
+                ret |= 0b0000_0100;
             }
 
             if value.privacy {
-                ret |= 0x010_u8;
+                ret |= 0b0000_0010;
             }
 
             if value.auth {
-                ret |= 0x001_u8;
+                ret |= 0b0000_0001;
             }
 
             Ok(vec![ret].into())
