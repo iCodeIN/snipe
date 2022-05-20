@@ -70,10 +70,7 @@ impl<'a, I: SnmpInterface + Send + Sync> ReadIpAddress for ExampleMib<'a, I> {
 //     this method returns IpAddress
 
 async fn x<T: SnmpInterface>(mut x: T) {
-    let ip_address = x.example_mib()
-        .ip_address()
-        .await
-        .unwrap();
+    let _ = x.example_mib().ip_address().await.unwrap();
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -103,7 +100,9 @@ pub enum Error {
     #[error("secret key is too short (expected 8, got {})", .0)]
     SecretKeyIsTooShort(usize),
     #[error("hash key is of an invalid length")]
-    HashKeyInvalidLength
+    HashKeyInvalidLength,
+    #[error("the incoming message did not match the expected hash")]
+    IncomingAuthFail,
 }
 
 impl From<InvalidVariant> for Error {

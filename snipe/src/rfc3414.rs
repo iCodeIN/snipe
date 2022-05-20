@@ -38,9 +38,9 @@ trait GetKey: HashToVec {
         let mut count = 0_u64;
         let mut hasher = Sha1::new();
         while count < 1024 * 1024 {
-            for i in 0..64 {
+            for x in &mut cp[..64] {
                 password_index += 1;
-                cp[i] = password[password_index % password.len()];
+                *x = password[password_index % password.len()];
             }
             hasher.update(cp);
             count += 64;
@@ -50,7 +50,7 @@ trait GetKey: HashToVec {
         cp[Self::DIGEST_SIZE..Self::DIGEST_SIZE + engine_id.len()].copy_from_slice(engine_id);
         cp[Self::DIGEST_SIZE + engine_id.len()..(Self::DIGEST_SIZE * 2) + engine_id.len()]
             .copy_from_slice(&slice[..Self::DIGEST_SIZE]);
-        Ok(Self::hash(&cp, None)?)
+        Self::hash(&cp, None)
     }
 }
 
@@ -96,4 +96,15 @@ impl AuthProtocol {
         ret.drain(12..);
         Ok(ret)
     }
+    pub fn validate(&self, password: &[u8], engine_id: &[u8], auth_params: &[u8], msg: &[u8]) -> Result<(), crate::Error> {
+        self.validate_with_key(&self.get_key(password, engine_id)?[..], auth_params, msg)
+    }
+    pub fn validate_with_key(&self, key: &[u8], auth_params: &[u8], msg: &[u8]) -> Result<(), crate::Error> {
+        if &self.hash(msg, Some(key))?[..12] != auth_params {
+            Err(crate::Error::IncomingAuthFail)
+        } else {
+            Ok(())
+        }
+    }
 }
+

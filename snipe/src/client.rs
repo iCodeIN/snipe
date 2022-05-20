@@ -1,8 +1,4 @@
-use std::{
-    io::{Read, Write},
-    sync::atomic::AtomicI32,
-    time::{Instant, SystemTime},
-};
+use std::time::Instant;
 
 use rasn::types::{ObjectIdentifier, OctetString};
 use rasn_smi::v2::ObjectSyntax;
@@ -12,7 +8,7 @@ use rasn_snmp::{
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::rfc3412::MessageFlags;
+use crate::{rfc3412::MessageFlags, rfc3414::AuthProtocol};
 
 const SNMP_VERSION: i32 = 3;
 const MAX_MESSAGE_SIZE: i32 = 65507;
@@ -28,7 +24,10 @@ pub struct DefaultSnmpInterface<T: AsyncRead + AsyncWrite> {
     msg_id: i32,
     boots: i32,
     init_time: Instant,
-    user_name: OctetString,
+    username: OctetString,
+    auth_protocol: AuthProtocol,
+    auth_password: Vec<u8>,
+    priv_password: Vec<u8>,
     flags: MessageFlags,
 }
 
@@ -49,9 +48,6 @@ impl<T: AsyncRead + AsyncWrite> DefaultSnmpInterface<T> {
         }
     }
 
-    pub fn encrypt_pdu(&mut self, pdu: ScopedPdu) -> ScopedPduData {
-        todo!()
-    }
     pub fn create_msg(&mut self, pdu: ScopedPdu) -> Result<Message, crate::Error> {
         Ok(Message {
             version: SNMP_VERSION.into(),
@@ -72,9 +68,9 @@ impl<T: AsyncRead + AsyncWrite> DefaultSnmpInterface<T> {
                 authoritative_engine_time: self.time().into(),
                 // NOTE: ORDER MATTERS HERE!
                 authoritative_engine_boots: self.boots.into(),
-                user_name: self.user_name.clone(),
-                authentication_parameters: todo!(),
-                privacy_parameters: todo!(),
+                user_name: self.username.clone(),
+                authentication_parameters: [0_u8; 12][..].into(),
+                privacy_parameters: [0_u8; 12][..].into(),
             },
             scoped_data: ScopedPduData::CleartextPdu(pdu),
         })
