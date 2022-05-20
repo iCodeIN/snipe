@@ -2,6 +2,7 @@ pub mod client;
 pub mod prelude;
 pub mod rfc1212;
 pub mod rfc3412;
+pub mod rfc3414;
 
 use std::{
     io::{Read, Write},
@@ -69,7 +70,10 @@ impl<'a, I: SnmpInterface + Send + Sync> ReadIpAddress for ExampleMib<'a, I> {
 //     this method returns IpAddress
 
 async fn x<T: SnmpInterface>(mut x: T) {
-    x.example_mib().ip_address().await.unwrap();
+    let ip_address = x.example_mib()
+        .ip_address()
+        .await
+        .unwrap();
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -92,8 +96,14 @@ pub enum Error {
     InsufficientLength(usize),
     #[error("the given network address type is invalid/not supported: {}", .0)]
     UnsupportedNetworkAddress(u32),
-    #[error("noAuthPriv (..10 - privacy flag set but not auth flag) is reserved and must not be used")]
-    PrivNoAuth
+    #[error(
+        "noAuthPriv (..10 - privacy flag set but not auth flag) is reserved and must not be used"
+    )]
+    PrivNoAuth,
+    #[error("secret key is too short (expected 8, got {})", .0)]
+    SecretKeyIsTooShort(usize),
+    #[error("hash key is of an invalid length")]
+    HashKeyInvalidLength
 }
 
 impl From<InvalidVariant> for Error {
