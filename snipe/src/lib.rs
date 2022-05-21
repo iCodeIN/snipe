@@ -8,9 +8,10 @@ use std::{
     io::{Read, Write},
     num::{ParseIntError, TryFromIntError},
     str::Utf8Error,
-    string::FromUtf8Error,
+    string::FromUtf8Error
 };
 
+use num_bigint::TryFromBigIntError;
 pub use rasn as asn;
 pub use rasn::prelude::*;
 use rasn_smi::v1::{InvalidVariant, IpAddress};
@@ -81,6 +82,8 @@ pub enum Error {
     FromUtf8(#[from] FromUtf8Error),
     #[error("failed to convert from an int: {}", .0)]
     IntegerConvert(#[from] TryFromIntError),
+    #[error("failed to convert from ASN int: {}", .0)]
+    BigIntegerConvert(#[from] TryFromBigIntError<Integer>),
     #[error("this error is impossible")]
     Infalliable(#[from] std::convert::Infallible),
     #[error("message was valid SMI but was not the variant we expected")]
@@ -103,6 +106,10 @@ pub enum Error {
     HashKeyInvalidLength,
     #[error("the incoming message did not match the expected hash")]
     IncomingAuthFail,
+    #[error("failed to encode ASN: {}", .0)]
+    AsnEncodeError(rasn::ber::enc::Error),
+    #[error("failed to decode ASN: {}", .0)]
+    AsnDecodeError(rasn::ber::de::Error),
 }
 
 impl From<InvalidVariant> for Error {
