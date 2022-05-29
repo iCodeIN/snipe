@@ -8,9 +8,10 @@ use std::{
     io::{Read, Write},
     num::{ParseIntError, TryFromIntError},
     str::Utf8Error,
-    string::FromUtf8Error
+    string::FromUtf8Error,
 };
 
+use aes::cipher::{block_padding::UnpadError, inout::PadError};
 use num_bigint::TryFromBigIntError;
 pub use rasn as asn;
 pub use rasn::prelude::*;
@@ -107,9 +108,13 @@ pub enum Error {
     #[error("the incoming message did not match the expected hash")]
     IncomingAuthFail,
     #[error("failed to encode ASN: {}", .0)]
-    AsnEncodeError(rasn::ber::enc::Error),
+    AsnEncode(rasn::ber::enc::Error),
     #[error("failed to decode ASN: {}", .0)]
-    AsnDecodeError(rasn::ber::de::Error),
+    AsnDecode(rasn::ber::de::Error),
+    #[error("failed to pad PDU bytes for encryption: {}", .0)]
+    EncryptionPadding(PadError),
+    #[error("failed to unpad PDU bytes for decryption: {}", .0)]
+    DecryptionUnpadding(UnpadError),
 }
 
 impl From<InvalidVariant> for Error {

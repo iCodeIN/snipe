@@ -1,7 +1,9 @@
 use std::mem::size_of;
 
 use aes::{
-    cipher::{AsyncStreamCipher, KeyIvInit},
+    cipher::{
+        block_padding::ZeroPadding, AsyncStreamCipher, BlockDecryptMut, BlockEncryptMut, KeyIvInit,
+    },
     Aes128,
 };
 use des::Des;
@@ -154,14 +156,12 @@ fn get_aes_iv(security_params: &USMSecurityParameters) -> Result<[u8; 16], crate
 trait PrivKey<D: GetKey> {
     type Salt;
     fn encrypt(
-        &self,
         pdu: ScopedPdu,
         security_params: &mut USMSecurityParameters,
         password: &[u8],
         salt: Self::Salt,
     ) -> Result<ScopedPduData, crate::Error>;
     fn decrypt(
-        &self,
         pdu: ScopedPduData,
         security_params: &USMSecurityParameters,
         password: &[u8],
@@ -171,7 +171,6 @@ trait PrivKey<D: GetKey> {
 impl<D: GetKey> PrivKey<D> for Aes128 {
     type Salt = u64;
     fn encrypt(
-        &self,
         pdu: ScopedPdu,
         security_params: &mut USMSecurityParameters,
         password: &[u8],
@@ -179,18 +178,17 @@ impl<D: GetKey> PrivKey<D> for Aes128 {
     ) -> Result<ScopedPduData, crate::Error> {
         let mut key = [0_u8; 16];
         key.copy_from_slice(
-            &D::get_key(password, &security_params.authoritative_engine_id[..])?[..],
+            &D::get_key(password, &security_params.authoritative_engine_id[..])?[..16],
         );
         security_params.privacy_parameters = salt.to_be_bytes().to_vec().into();
         let encryptor =
             cfb_mode::Encryptor::<Aes128>::new(&key.into(), &get_aes_iv(security_params)?.into());
-        let mut data = rasn::der::encode(&pdu).map_err(crate::Error::AsnEncodeError)?;
+        let mut data = rasn::ber::encode(&pdu).map_err(crate::Error::AsnEncode)?;
         encryptor.encrypt(&mut data[..]);
         Ok(ScopedPduData::EncryptedPdu(data.into()))
     }
 
     fn decrypt(
-        &self,
         pdu: ScopedPduData,
         security_params: &USMSecurityParameters,
         password: &[u8],
@@ -199,7 +197,7 @@ impl<D: GetKey> PrivKey<D> for Aes128 {
             ScopedPduData::EncryptedPdu(data) => {
                 let mut key = [0_u8; 16];
                 key.copy_from_slice(
-                    &D::get_key(password, &security_params.authoritative_engine_id[..])?[..],
+                    &D::get_key(password, &security_params.authoritative_engine_id[..])?[..16],
                 );
                 let decryptor = cfb_mode::Decryptor::<Aes128>::new(
                     &key.into(),
@@ -207,42 +205,93 @@ impl<D: GetKey> PrivKey<D> for Aes128 {
                 );
                 let mut data_cp = data.to_vec();
                 decryptor.decrypt(&mut data_cp[..]);
-                Ok(rasn::der::decode(&data_cp[..]).map_err(crate::Error::AsnDecodeError)?)
+                Ok(rasn::ber::decode(&data_cp[..]).map_err(crate::Error::AsnDecode)?)
             }
             ScopedPduData::CleartextPdu(pdu) => Ok(pdu),
         }
     }
 }
 
-fn get_des_iv(key: &[u8]) -> Result<[u8; 8], crate::Error> {
-    let mut ret = [0_u8; 8];
-    ret.copy_from_slice(&key[..8]);
-    for (idx, salt) in ret.iter_mut().enumerate() {
-        *salt ^= key[8 + idx];
-    }
-
-    Ok(ret)
+fn get_des_iv(key: &[u8], salt: &[u8]) -> Result<([u8; 8], [u8; 8]), crate::Error> {
+    let (des_key, pre_iv) = key[..16].split_at(8);
+    let mut key = [0_u8; 8];
+    key.copy_from_slice(des_key);
+    let mut iv = [0_u8; 8];
+    iv.copy_from_slice(salt);
+    iv.iter_mut()
+        .zip(pre_iv.iter())
+        .for_each(|(salt_byte, pre_iv)| *salt_byte ^= pre_iv);
+    Ok((key, iv))
 }
 
 impl<D: GetKey> PrivKey<D> for Des {
     type Salt = u32;
 
     fn encrypt(
-        &self,
         pdu: ScopedPdu,
         security_params: &mut USMSecurityParameters,
         password: &[u8],
         salt: Self::Salt,
     ) -> Result<ScopedPduData, crate::Error> {
-        todo!()
+        let mut input_salt = [0_u8; size_of::<u64>()];
+        input_salt[..size_of::<u32>()].copy_from_slice(
+            &u32::try_from(security_params.authoritative_engine_boots.clone())?.to_be_bytes()[..],
+        );
+        input_salt[size_of::<u32>()..].copy_from_slice(&salt.to_be_bytes()[..]);
+        security_params.privacy_parameters = input_salt.to_vec().into();
+        let (key, iv) = get_des_iv(
+            &D::get_key(password, &security_params.authoritative_engine_id[..])?[..16],
+            &input_salt[..],
+        )?;
+        let encryptor = cfb_mode::Encryptor::<Des>::new(&key.into(), &iv.into());
+        let mut data = rasn::ber::encode(&pdu).map_err(crate::Error::AsnEncode)?;
+        encryptor.encrypt(&mut data[..]);
+        Ok(ScopedPduData::EncryptedPdu(data.into()))
     }
 
     fn decrypt(
-        &self,
         pdu: ScopedPduData,
         security_params: &USMSecurityParameters,
         password: &[u8],
     ) -> Result<ScopedPdu, crate::Error> {
-        todo!()
+        match pdu {
+            ScopedPduData::EncryptedPdu(data) => {
+                let (key, iv) = get_des_iv(
+                    &D::get_key(password, &security_params.authoritative_engine_id[..])?[..16],
+                    &security_params.privacy_parameters[..],
+                )?;
+                let decryptor = cfb_mode::Decryptor::<Des>::new(&key.into(), &iv.into());
+                let mut data_cp = data.to_vec();
+                decryptor.decrypt(&mut data_cp[..]);
+                Ok(rasn::ber::decode(&data_cp[..]).map_err(crate::Error::AsnDecode)?)
+            }
+            ScopedPduData::CleartextPdu(pdu) => Ok(pdu),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use hex_literal::hex;
+
+    // Values used within these tests were captured from a real wireshark trace.
+
+    #[test]
+    fn des_decrypt() {
+        let pdu = <Des as PrivKey<Md5>>::decrypt(
+            ScopedPduData::EncryptedPdu(
+                hex!("1a220c98ff3459d9f6648224c59553506d0c91bd9b5d13a40481840ec529c901040078bfecbd58417eb90815aff07292ce22cd3536d29c8fc081ea8b3d988859")[..].into()
+            ),
+            &USMSecurityParameters {
+                authoritative_engine_id: hex!("80004fb8056e69676874726176656e02828500")[..].into(),
+                authoritative_engine_boots: 2_u32.into(), authoritative_engine_time: 224_u32.into(),
+                user_name: "simulator".into(),
+                authentication_parameters: hex!("c23bda11ede262c244b5677b")[..].into(),
+                privacy_parameters: hex!("00000001166bd28b")[..].into()
+            },
+            "privatus".as_bytes()
+        ).expect("failed to decrypt!");
     }
 }

@@ -22,3 +22,6 @@ hmac = "*"
 md-5 = "*"
 sha-1 = "*"
 cbc = "*"
+
+[dev-dependencies]
+hex-literal = "*"

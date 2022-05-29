@@ -1,8 +1,8 @@
 use convert_case::{Case, Casing};
 use quote::quote;
 use syn::{
-    parse::Parse, parse_macro_input, punctuated::Punctuated, spanned::Spanned, Ident, Lit, Token,
-    Type, Index,
+    parse::Parse, parse_macro_input, punctuated::Punctuated, spanned::Spanned, Ident, Index, Lit,
+    Token, Type,
 };
 
 #[proc_macro]
@@ -163,7 +163,6 @@ pub fn __private_api_tuple_oid_converter_impl(
     if let Lit::Int(num_generics_b10) = input {
         let mut impls = Vec::new();
         for num_generics in 2..=num_generics_b10.base10_parse::<usize>().unwrap_or(0) {
-
             let mut constraints = Punctuated::<_, Token![+]>::new();
             let mut generics = Punctuated::<_, Token![,]>::new();
             let mut generics_lower = Punctuated::<_, Token![,]>::new();
@@ -172,20 +171,18 @@ pub fn __private_api_tuple_oid_converter_impl(
             for i in 0..num_generics {
                 let upper = Ident::new(format!("I{i}").as_str(), num_generics_b10.span());
                 constraints.push(quote! { OidConverter<#upper> });
-                
+
                 generics.push(upper.clone());
-    
+
                 let lower = Ident::new(format!("i{i}").as_str(), num_generics_b10.span());
                 let lower_r = Ident::new(format!("i{i}_r").as_str(), num_generics_b10.span());
                 generics_lower.push(lower.clone());
-                from_impls.push(
-                    quote! {
-                        let #lower_r = <T as OidConverter<#upper>>::try_from_oid(identifier)?;
-                        let #lower = #lower_r.converted;
-                        identifier = &identifier[#lower_r.num_consumed..];
-                    }
-                );
-    
+                from_impls.push(quote! {
+                    let #lower_r = <T as OidConverter<#upper>>::try_from_oid(identifier)?;
+                    let #lower = #lower_r.converted;
+                    identifier = &identifier[#lower_r.num_consumed..];
+                });
+
                 let idx = Index::from(i);
                 to_impls.push(
                     quote! {
@@ -193,7 +190,7 @@ pub fn __private_api_tuple_oid_converter_impl(
                     }
                 )
             }
-    
+
             impls.push(quote! {
                 impl<T: #constraints, #generics> OidConverter<(#generics)> for T {
                     fn try_from_oid(mut identifier: &[u32]) -> Result<OidConversionResult<(#generics)>, crate::Error> {
@@ -206,7 +203,7 @@ pub fn __private_api_tuple_oid_converter_impl(
                             }
                         )
                     }
-            
+
                     fn try_to_oid(value: (#generics)) -> Result<ObjectIdentifier, crate::Error> {
                         let mut identifiers = Vec::new();
                         #(#to_impls)*
@@ -218,7 +215,8 @@ pub fn __private_api_tuple_oid_converter_impl(
 
         quote! {
             #(#impls)*
-        }.into()
+        }
+        .into()
     } else {
         proc_macro::TokenStream::new()
     }
